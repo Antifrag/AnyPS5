@@ -47,7 +47,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-void Draw(AgcDriver::VulkanDevice& device, VkPolygonMode mode) {
+void Draw(AgcDriver::VulkanDevice& device, VkPolygonMode mode, VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST) {
     Pixels.fill(Kept);
     for (std::size_t index = 0; index < Corners.size(); ++index) {
         Vertices[index] = {Corners[index][0] * 2.0f / Width - 1.0f, 1.0f - Corners[index][1] * 2.0f / Height, 0.5f, 1.0f};
@@ -95,7 +95,7 @@ void Draw(AgcDriver::VulkanDevice& device, VkPolygonMode mode) {
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
-    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.topology = topology;
     state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
     state.negativeOneToOne = false;
     state.scissor = {{0, 0}, {Width, Height}};
@@ -169,6 +169,8 @@ int main() {
         Expect(Outside, false, "filled triangle");
         if (Unsupported(*device, VK_POLYGON_MODE_POINT)) return VulkanTestSkipped;
         ExpectExactly(CornerPixels, "point polygon mode");
+        Draw(*device, VK_POLYGON_MODE_FILL, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
+        ExpectExactly(CornerPixels, "vertex point list");
         if (Unsupported(*device, VK_POLYGON_MODE_LINE)) return VulkanTestSkipped;
         Expect(StraightEdges(), true, "line polygon mode");
         Expect(Interior, false, "line polygon mode");

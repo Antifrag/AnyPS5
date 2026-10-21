@@ -1235,7 +1235,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     const auto primitive = read(queue.userConfig, 0x242, RegisterBank::UserConfig);
     APS5_LOG_OUT_DEBUG("DecodeState primitive=%u path=%u vertexWave=%u", primitive, static_cast<unsigned>(result.stages.path), result.stages.vertexWaveSize);
     switch (primitive) {
-        case 1: Require(result.stages.mesh.has_value(), "point-list vertex rendering requires point-size output support"); result.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST; break;
+        case 1: result.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST; break;
         case 2: result.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; break;
         case 3: result.topology = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP; break;
         case 7:
@@ -1263,6 +1263,19 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     zero(cx, 0x207, ~(LayerExports | ClipCullExports | inactiveVertexPointSize(queue)), "layer, viewport or auxiliary vertex exports");
     Require(std::popcount(read(cx, 0x207) & 0xffffu) <= 8, "more than eight clip and cull distances are unsupported");
     result.paClVsOutCntl = read(cx, 0x207);
+    if (result.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST && !result.stages.mesh.has_value()) {
+        const auto size = read(cx, 0x280);
+        const auto limits = read(cx, 0x281);
+        Require(size == 0x80008u, zeroMessage(0x280, size, "a vertex point list with a point size other than one pixel"));
+        Require((limits & 0xffffu) <= 8u && (limits >> 16u) >= 8u, zeroMessage(0x281, limits, "a vertex point list whose size limits exclude one pixel"));
+        if (!PixelProgramSkipped(queue)) {
+            const auto inputs = read(cx, 0x1b6) & 0x3fu;
+            Require(inputs <= 32u, "too many pixel interpolators for a vertex point list");
+            for (std::uint32_t input = 0; input < inputs; ++input) {
+                if ((read(cx, 0x191u + input) & ((1u << 17u) | (1u << 23u))) != 0) zero(cx, 0x1b5, 2u, "point sprite texture coordinates");
+            }
+        }
+    }
     result.samples = decodeSamples(cx);
     Require(coveredCentroidSupported(queue), "COVERED_CENTROID_IS_CENTER with active or unspecified centroid inputs is not implemented");
     decodeSampleLocations(cx, result);

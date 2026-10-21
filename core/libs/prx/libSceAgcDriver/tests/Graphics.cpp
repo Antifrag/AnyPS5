@@ -120,6 +120,59 @@ void expectFailure(TAction action, std::string_view reason) {
     throw std::runtime_error("expected graphics rejection: " + std::string(reason));
 }
 
+void vertexPointListTests() {
+    auto queue = makeState();
+    queue.context[0x1b3] = queue.context[0x1b4] = 2;
+    queue.userConfig[0x242] = 1;
+    queue.context[0x280] = 0x80008u;
+    queue.context[0x281] = 0xffff0000u;
+    const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+    Require(rejection.empty(), "one-pixel vertex points failed the precheck: " + rejection);
+    std::vector<AgcDriver::Graphics::RegisterRead> reads;
+    const auto state = [&] {
+        const AgcDriver::Graphics::RegisterReadLogScope scope(&reads);
+        return AgcDriver::Graphics::DecodeState(queue);
+    }();
+    for (const auto read : reads) Require(AgcDriver::Graphics::DrawKeyCovers(read), "point-list register is missing from the draw key");
+    Require(state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST && state.polygonMode == VK_POLYGON_MODE_FILL && AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Point, "vertex points decoded as another primitive");
+    const auto rejected = [&](std::uint32_t size, std::uint32_t limits) {
+        auto invalid = queue;
+        invalid.context[0x280] = size;
+        invalid.context[0x281] = limits;
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(invalid)); }, "a vertex point list");
+    };
+    for (const auto size : {0u, 0x80010u, 0x100008u, 0x100010u}) rejected(size, 0xffff0000u);
+    for (const auto limits : {0x70000u, 0xffff0009u, 0x70009u}) rejected(0x80008u, limits);
+    queue.context[0x281] = 0x80008u;
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "exact one-pixel size limits failed the precheck");
+    static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    for (const auto offset : {0x280u, 0x281u}) {
+        auto missing = queue;
+        missing.context.erase(offset);
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(missing)); }, "missing register");
+    }
+    for (const auto flag : {1u << 17u, 1u << 23u}) {
+        auto sprite = queue;
+        sprite.context[0x1b6] = 2;
+        sprite.context[0x191] = 0;
+        sprite.context[0x192] = flag;
+        sprite.context[0x1b5] = 2;
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(sprite)); }, "point sprite texture coordinates");
+        sprite.context[0x1b5] = 0;
+        static_cast<void>(AgcDriver::Graphics::DecodeState(sprite));
+    }
+    AgcDriver::Graphics::Context context{};
+    AgcDriver::Graphics::VertexInputLayout vertices{};
+    AgcDriver::Graphics::PipelineSetLayouts layouts{};
+    try {
+        AgcDriver::Graphics::Pipeline pipeline(context, state, vertices, layouts, std::span<const AgcDriver::Graphics::CompiledShader>{});
+    } catch (const std::runtime_error& error) {
+        Require(std::string_view(error.what()).find("needs VK_KHR_maintenance5") != std::string_view::npos, "point lists without maintenance5 failed for another reason");
+        return;
+    }
+    throw std::runtime_error("point lists without maintenance5 passed pipeline creation");
+}
+
 void inactiveVertexPointSizeTests() {
     const auto pointSizeState = [] {
         auto queue = makeState();
@@ -5071,6 +5124,7 @@ PFN_vkVoidFunction VKAPI_CALL mockDepthCopyProc(VkDevice device, const char* nam
 
 AgcDriver::Graphics::Context mockContext() {
     AgcDriver::Graphics::Context context{};
+    context.maintenance5 = true;
     context.deviceProc = mockProc;
     context.memory.memoryTypeCount = 1;
     context.memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -11184,6 +11238,7 @@ int main(int argc, char** argv) {
         UnsupportedTessellationFieldTests();
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
+        vertexPointListTests();
         PolygonPrimitiveTests();
         TuningFieldTests();
         PixelInputLayoutTests();

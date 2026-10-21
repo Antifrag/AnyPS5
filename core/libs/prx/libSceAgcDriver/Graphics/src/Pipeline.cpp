@@ -323,6 +323,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
+    Require(state.topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.stages.mesh.has_value() || context.maintenance5, "a vertex point list needs VK_KHR_maintenance5 for its one-pixel point size");
     sampleLocationsEnabled = ValidateSampleLocations(context, state);
     const auto host = HostSampleLocationsFor(context, state);
     sampleLocationGrid = host.grid;
